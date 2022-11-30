@@ -1,0 +1,74 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Monitoring::Plugin;
+use Data::Dumper;
+use File::Find;
+
+sub count_want {
+	my ($list) = @_;
+
+	if (stat($_) && -f _) {
+		push @{$list}, $File::Find::name;
+	}
+};
+
+sub count_files_recursive {
+	my ($dir) = @_;
+
+	if (!stat($dir) || ! -d _) {
+		return 0;
+	}
+
+	my @list;
+	find({ wanted => sub { count_want(\@list) }}, $dir);
+
+	return scalar @list;
+}
+
+
+my $p = Monitoring::Plugin->new(
+	shortname => "uucp_failed",
+	usage => "check_uucp_failed -b uucpspooldir -w warning -c critical"
+);
+
+$p->add_arg(
+	spec => 'uucpspooldir|s=s',
+	help => '-s, --uucpspooldir=uucp spool directory',
+	default => '/var/spool/uucp',
+	required => 0
+);
+
+$p->add_arg(
+	spec => 'critical|c=s',
+	help => '-c, --critical=INTEGER',
+	default => 10
+);
+
+$p->add_arg(
+	spec => 'warning|w=s',
+	help => '-w, --warning=INTEGER',
+	default => 0
+);
+
+$p->getopts;
+
+my $failed=count_files_recursive(sprintf("%s/%s", $p->opts->uucpspooldir, ".Failed"));
+my $preserved=count_files_recursive(sprintf("%s/%s", $p->opts->uucpspooldir, ".Preserved"));
+
+if (!defined($failed) || !defined($preserved)) {
+	$p->nagios_exit(UNKNOWN, "Could not get status");
+}
+
+my $status=sprintf("%d failed and %d preserved job files", $failed, $preserved);
+$p->add_message(OK, $status);
+
+my $tc=$p->check_threshold(
+	check => ($failed + $preserved),
+	warning => "0:" . $p->opts->warning, 
+	critical => "0:" . $p->opts->critical);
+
+$p->plugin_exit($tc, $status) if $tc != OK;
+
+my ($code,$message)=$p->check_messages();
+$p->nagios_exit($code,$message);
